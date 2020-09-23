@@ -1,8 +1,7 @@
 [BITS 16]
 [ORG 0x7C00]
 
-  section .text
-
+section .text
   global main
 
 main:
@@ -29,29 +28,6 @@ bootsector:
   iVolID        db  "seri"          ; disk serial
   acVolumeLabel db  "MYVOLUME   "   ; volume label
   acFSType      db  "FAT16   "      ; file system type
-
-WriteString:
-  lodsb                   ; load byte at ds:si into al (advancing si)
-  or     al, al           ; test if character is 0 (end)
-  jz     WriteString_done ; jump to end if 0.
- 
-  mov    ah, 0xE          ; Subfunction 0xe of int 10h (video teletype output)
-  mov    bx, 9            ; Set bh (page nr) to 0, and bl (attribute) to white (9)
-  int    0x10             ; call BIOS interrupt.
- 
-  jmp    WriteString      ; Repeat for next character.
- 
-WriteString_done:
-  ret		  ; return
- 
-Reboot:
-  lea  si, [rebootmsg] ; Load address of reboot message into si
-  call WriteString   ; print the string
-  xor  ax, ax        ; subfuction 0
-  int  0x16          ; call bios to wait for key
-  db   0xEA          ; unassembled machine language to jump to FFFF:0000 (reboot)
-  dw   0x0000
-  dw   0xFFFF
  
 start:
   ; Setup segments:
@@ -72,20 +48,64 @@ start:
   ; Jump to bootFailure on error.
   mov  dl, [iBootDrive]  ; drive to reset
   xor  ax, ax          ; subfunction 0
-  int  0x13            ; call interrupt 13h
-  jc   bootFailure     ; display error message if carry set (error)  
+  int  13h             ; call interrupt 13h
+  jc   BootFailure     ; display error message if carry set (error)  
  
   ; End of loader, for now. Reboot.
+  lea  si, [rebootpromptmsg]  ; Load address of reboot message into si
+  call WriteString      ; print the string
+  call KeypressWaitLoop
   call Reboot
+  hlt
  
-bootFailure:
+BootFailure:
   lea  si, [diskerror]
   call WriteString
-  call Reboot
- 
-loadmsg:    db "Loading OS...", 0x0A, 0x0D, 0x00
-diskerror:  db "Disk error.", 0x00
-rebootmsg:  db "Press any key to reboot.", 0x0A, 0x0D, 0x00
 
-times 510 - ( $ - $$ ) db 1 ; Pad with nulls up to 510 bytes (excl. boot magic)
-BootMagic: dw 0xAA55 ; magic word for BIOS
+KeypressWaitLoop:
+  xor ax, ax  ; zero ax
+  mov ah, 0h  ; 
+  int 16h
+  ret
+ 
+ SleepSecond:
+  ; bios wait service expects 16bit wait period setup in cx (high byte) and dx (low byte) registers 
+  ; actual value is concatenation of high + low in hex to set wait period in microseconds
+  ; https://dos4gw.org/INT_15H_86H_Wait
+  mov     cx, 0x001E  ; high byte
+  mov     dx, 0x4240  ; low byte
+
+  xor     ax, ax      ; zero out ax
+  mov     ah, 86h     ; wait subfunction
+  int     15h         ; trigger bios service
+  ret
+
+WriteString:
+  lodsb                   ; load byte at ds:si into al (advancing si)
+  or     al, al           ; test if character is 0 (end)
+  jz     WriteStringDone ; jump to end if 0.
+ 
+  mov    ah, 0Eh          ; Subfunction 0xe of int 10h (video teletype output)
+  mov    bx, 9            ; Set bh (page nr) to 0, and bl (attribute) to white (9)
+  int    10h              ; call BIOS interrupt.
+ 
+  jmp    WriteString      ; Repeat for next character.
+ 
+WriteStringDone:
+  ret		  ; return
+ 
+Reboot:
+  lea si, [rebootmsg]
+  call WriteString
+  call SleepSecond
+  db   0xEA             ; unassembled machine language to jump to FFFF:0000 (reboot)
+  dw   0x0000
+  dw   0xFFFF
+
+loadmsg:    db "Loading OS...", 0Ah, 0Dh, 00h
+diskerror:  db "Disk error.", 00h
+rebootpromptmsg:  db "Press any key to reboot.", 0Ah, 0Dh, 00h
+rebootmsg:  db "Rebooting...", 0Ah, 0Dh, 00h
+
+times 510 - ( $ - $$ ) db 0 ; Pad with nulls up to 510 bytes (excl. boot magic)
+bootmagic: dw 0xAA55 ; magic word for BIOS
